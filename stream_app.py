@@ -1,42 +1,69 @@
 import streamlit as st
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Input
 import pydeck as pdk
 import folium
 from streamlit_folium import folium_static
-from folium.plugins import FastMarkerCluster
 import matplotlib.pyplot as plt
+from folium.plugins import FastMarkerCluster
 
-# Fonctions de chargement des données (avec cache)
+# Chargement et préparation des données
 @st.cache_data
-def load_data(filename):
-    data = pd.read_csv(filename, delimiter=';', decimal=',',low_memory=False)
-     # Renommer la colonne ici si elle est nommée 'long' dans le fichier CSV
-    if 'long' in data.columns:
-        data = data.rename(columns={'long': 'lon'})
+def load_and_prepare_data(filename):
+    data = pd.read_csv(filename, delimiter=';', decimal=',')
+    data = data.rename(columns={'long': 'lon'}) if 'long' in data.columns else data
+    data['lat'] = data['lat'].astype(str).str.replace(',', '.')
+    data['lon'] = data['lon'].astype(str).str.replace(',', '.')
+    data['lat'] = pd.to_numeric(data['lat'], errors='coerce')
+    data['lon'] = pd.to_numeric(data['lon'], errors='coerce')
+    data.dropna(subset=['lat', 'lon'], inplace=True)
+    data['hrmn'] = data['hrmn'].str.replace(':', '.').astype(float)
+    data['dep'] = pd.to_numeric(data['dep'], errors='coerce')
+    data['com'] = pd.to_numeric(data['com'], errors='coerce').fillna(0)
+    # Supprimer la colonne 'adr' qui n'est pas nécessaire
+    data = data.drop('adr', axis=1)
     return data
 
-# Chargement des données
-df_usagers = load_data('usagers-2022.csv')
-df_vehicules = load_data('vehicules-2022.csv')
-df_lieux = load_data('lieux-2022.csv')
-df_caracteristiques = load_data('carcteristiques-2022.csv')
+# Construction et entraînement du modèle
+@st.cache(allow_output_mutation=True)
+def build_and_train_model(data):
+    features = data[['jour', 'mois', 'hrmn']]
+    target = data[['lat', 'lon']]
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features)
+    model = Sequential([
+        Input(shape=(features_scaled.shape[1],)),
+        Dense(128, activation='relu'),
+        Dropout(0.1),
+        Dense(64, activation='relu'),
+        Dropout(0.1),
+        Dense(2)
+    ])
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    model.fit(features_scaled, target, epochs=20, batch_size=32, validation_split=0.2, verbose=1)
+    return model, scaler
 
-# Convertir les colonnes lat et lon en numériques (si ce ne sont pas déjà des types numériques)
-df_caracteristiques['lat'] = pd.to_numeric(df_caracteristiques['lat'], errors='coerce')
-df_caracteristiques['lon'] = pd.to_numeric(df_caracteristiques['lon'], errors='coerce')
+# Prédictions
+@st.cache(allow_output_mutation=True)
+def evaluate_model(model, scaler, input_features):
+    features_scaled = scaler.transform(input_features)
+    predictions = model.predict(features_scaled)
+    return predictions
 
-def show_map_folium(df):
-    st.subheader("Carte des accidents (Folium)")
-    m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=6)
+# Affichage des données
+def show_data(df):
+    st.image("paris.jpg", use_column_width=True)
+    st.subheader("Affichage des Données")
+    st.write(df.head())
+    st.subheader("Description Statistique des Données")
+    st.write(df.describe())
+    
+    
 
-    # Utiliser FastMarkerCluster pour un chargement plus rapide
-    marker_cluster = FastMarkerCluster(data=list(zip(df['lat'].dropna(), df['lon'].dropna())))
-    marker_cluster.add_to(m)
-
-    folium_static(m)
-
-# Fonction pour afficher une carte avec Pydeck
-def show_map(df):
+# Carte avec PyDeck
+def show_pydeck_map(df):
     if 'lat' in df.columns and 'lon' in df.columns:
         st.subheader("Carte des accidents (Pydeck)")
         st.write("Répartition géographique des accidents")
@@ -66,131 +93,75 @@ def show_map(df):
     else:
         st.warning("Les données de localisation ne sont pas disponibles.")
 
-def plot_dynamic_histogram(df, column):
-    fig, ax = plt.subplots()
-    df[column].dropna().hist(bins=20, ax=ax)
-    ax.set_title(f'Histogramme Dynamique pour {column}')
-    ax.set_xlabel(column)
-    ax.set_ylabel('Nombre d’occurrences')
-    st.pyplot(fig)
 
-# Analyse exploratoire des données
-def eda():
-    st.header("Analyse exploratoire des données (EDA)")
+# Carte avec Folium
+def show_map_folium(df):
+    st.subheader("Carte des accidents (Folium)")
+    m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=6)
 
-    st.subheader("Aperçu des données sur les usagers")
-    st.write(df_usagers.head())
-    st.subheader("Statistiques descriptives des données sur les usagers")
-    st.write(df_usagers.describe())
-    st.subheader("Valeurs manquantes dans les données sur les usagers")
-    st.write(df_usagers.isnull().sum())
+    # Utiliser FastMarkerCluster pour un chargement plus rapide
+    marker_cluster = FastMarkerCluster(data=list(zip(df['lat'].dropna(), df['lon'].dropna())))
+    marker_cluster.add_to(m)
 
-    st.subheader("Aperçu des données sur les vehicules")
-    st.write(df_vehicules.head())
-    st.subheader("Statistiques descriptives des données sur les vehicules")
-    st.write(df_vehicules.describe())
-    st.subheader("Valeurs manquantes dans les données sur les vehicules")
-    st.write(df_vehicules.isnull().sum())
+    folium_static(m)
 
-    st.subheader("Aperçu des données sur les lieux")
-    st.write(df_lieux.head())
-    st.subheader("Statistiques descriptives des données sur les lieux")
-    st.write(df_lieux.describe())
-    st.subheader("Valeurs manquantes dans les données sur les lieux")
-    st.write(df_lieux.isnull().sum())
+# Prédictions
+def show_predictions(model, scaler):
+    st.subheader("Effectuer une Prédiction")
+    jour = st.number_input('Jour', min_value=1, max_value=31, value=1)
+    mois = st.number_input('Mois', min_value=1, max_value=12, value=1)
+    hrmn = st.slider('Heure', min_value=0.0, max_value=23.99, value=12.0)
+    if st.button('Prédire'):
+        input_features = pd.DataFrame([[jour, mois, hrmn]], columns=['jour', 'mois', 'hrmn'])
+        predictions = evaluate_model(model, scaler, input_features)
+        st.write("Prédictions de latitude et longitude :")
+        st.write(predictions)
+        st.image("vehi.jpg", use_column_width=True)
 
-    st.subheader("Aperçu des données sur les caracteristiques")
-    st.write(df_caracteristiques.head())
-    st.subheader("Statistiques descriptives des données sur les caracteristiques")
-    st.write(df_caracteristiques.describe())
-    st.subheader("Valeurs manquantes dans les données sur les caracteristiques")
-    st.write(df_caracteristiques.isnull().sum())
-
-def visualisation(df):
-    st.header("Histogramme Dynamique")
-    # Permettre à l'utilisateur de choisir une colonne pour l'histogramme
-    if st.checkbox('Afficher Histogramme Dynamique'):
-        selected_column = st.selectbox('Choisir une colonne', df_caracteristiques.columns)
-        plot_dynamic_histogram(df_caracteristiques, selected_column)
-
-# Page d'accueil
-def home():
-    st.title("Analyse des accidents corporels en France")
-    st.markdown("""
-    Bienvenue sur cette application d'analyse des accidents corporels en France. 
-    Vous pouvez naviguer dans les différentes sections pour explorer les données des usagers, véhicules, lieux et caractéristiques des accidents.
-    """)
-    st.image('th.jpg', use_column_width=True)  # Remplacez 'logo.png' par le chemin vers votre image de logo
-
-
-
-def verify_data(df):
-    # Vérifier la qualité des données
-    qualite_suffisante = df.isnull().mean().max() < 0.1  # moins de 10% de valeurs manquantes
-    if not qualite_suffisante:
-        st.warning("La qualité des données n'est pas suffisante.")
+# Visualisations dynamiques
+def show_visualizations(df, model, scaler):
+    st.sidebar.subheader("MENU")
+    visualization_choice = st.sidebar.radio("Choisir une Option:", ["Données", "Carte avec PyDeck", "Carte avec Folium", "Prédictions"])
     
-    return qualite_suffisante
+    show_histograms = st.sidebar.checkbox("Afficher les Histogrammes")
 
-# Nettoyage des données
-def clean_data(df):
-    # Suppression des doublons
-    df.drop_duplicates(inplace=True)
+    if visualization_choice == "Données":
+        show_data(df)
+    elif visualization_choice == "Carte avec PyDeck":
+        show_pydeck_map(df)
+    elif visualization_choice == "Carte avec Folium":
+        show_map_folium(df)
+    elif visualization_choice == "Prédictions":
+        show_predictions(model, scaler)
 
-    # Traitement des valeurs manquantes
-    df.dropna(inplace=True)
-
-    # Conversion des types de données, si nécessaire
-    # Exemple: Convertir les colonnes 'lat' et 'lon' en numérique
-    
-    return df
-
-# Menu de navigation
-def main():
-    menu = ["Accueil", "Analyse exploratoire", "Nettoyage des données", "Carte avec Pydeck", "Carte avec Folium","Visualisations"]
-    choice = st.sidebar.selectbox("Menu", menu)
-
-    if choice == "Accueil":
-        home()
-    elif choice == "Analyse exploratoire":
-        eda()
-        # ... vous pouvez ajouter d'autres options si nécessaire
-    elif choice == "Nettoyage des données":
-        # Appel de la fonction de nettoyage pour chaque DataFrame
-        clean_df_usagers = clean_data(df_usagers)
-        clean_df_vehicules = clean_data(df_vehicules)
-        clean_df_lieux = clean_data(df_lieux)
-        clean_df_caracteristiques = clean_data(df_caracteristiques)
+    if show_histograms:
+        st.subheader("Histogrammes")
         
-        # Vérification des données nettoyées
-        if all(verify_data(df) for df in [clean_df_usagers, clean_df_vehicules, clean_df_lieux, clean_df_caracteristiques]):
-            st.success("Les données sont propres et de qualité vérifiée.")
-            st.subheader("Valeurs manquantes dans les données sur les usagers")
-            st.write(df_usagers.isnull().sum())
-            st.subheader("Valeurs manquantes dans les données sur les vehicules")
-            st.write(df_vehicules.isnull().sum())
-            st.subheader("Valeurs manquantes dans les données sur les lieux")
-            st.write(df_lieux.isnull().sum())
-            st.subheader("Valeurs manquantes dans les données sur les caracteristiques")
-            st.write(df_caracteristiques.isnull().sum())
-        # Utiliser les DataFrame nettoyés pour les autres analyses
+        # Sélection du jour et du mois
+        selected_day = st.sidebar.slider("Sélectionner un jour", 1, 31, 1)
+        selected_month = st.sidebar.slider("Sélectionner un mois", 1, 12, 1)
+        
+        # Filtrage des données en fonction de la sélection de l'utilisateur
+        filtered_df = df[(df['jour'] == selected_day) & (df['mois'] == selected_month)]
+        
+        # Affichage des histogrammes
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].hist(filtered_df['jour'], bins=20, color='skyblue', alpha=0.7)
+        axes[0].set_title('Histogramme du Jour')
+        axes[1].hist(filtered_df['mois'], bins=20, color='salmon', alpha=0.7)
+        axes[1].set_title('Histogramme du Mois')
+        axes[2].hist(filtered_df['hrmn'], bins=20, color='green', alpha=0.7)
+        axes[2].set_title('Histogramme de l\'Heure')
+        st.pyplot(fig)
 
-    elif choice == "Carte avec Pydeck":
-        show_map(df_caracteristiques)
-    elif choice == "Carte avec Folium":
-        show_map_folium(df_caracteristiques)
-    elif choice == "Visualisations":
-       # Permettre à l'utilisateur de choisir quel DataFrame explorer
-        df_choice = st.selectbox('Choisir un ensemble de données', ('Usagers', 'Véhicules', 'Lieux', 'Caractéristiques'))
-        if df_choice == 'Usagers':
-            visualisation(df_usagers)
-        elif df_choice == 'Véhicules':
-            visualisation(df_vehicules)
-        elif df_choice == 'Lieux':
-            visualisation(df_lieux)
-        elif df_choice == 'Caractéristiques':
-            visualisation(df_caracteristiques)
+# Fonction principale
+def main():
+    st.title("Prédiction des lieux d'accidents de la route")
+    df = load_and_prepare_data('carcteristiques-2022.csv')
+    model, scaler = build_and_train_model(df)
 
+    show_visualizations(df, model, scaler)
+    
 
 if __name__ == "__main__":
     main()

@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 url_page = 'https://www.data.gouv.fr/fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2022/'
 
 # Liste des catégories spécifiques qui nous intéressent
-categories_interet = ['usagers', 'vehicules', 'lieux', 'carcteristiques']
+categories_interet = ['usagers','carcteristiques']
 
 # Effectuer une requête GET à l'URL
 response = requests.get(url_page)

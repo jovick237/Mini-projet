@@ -23,5 +23,7 @@ Folium pour la visualisation cartographique
 ## Comment Utiliser :
 Clonez le dépôt sur votre machine locale.
 Assurez-vous d'avoir les dépendances Python installées en exécutant pip install -r requirements.txt.
-Lancez l'application en exécutant streamlit run stream_app.py dans votre terminal.
+Lancez l'application en exécutant :
+### streamlit run stream_app.py 
+dans votre terminal.
 Utilisez l'interface utilisateur pour explorer les données et effectuer des prédictions.
